@@ -6,11 +6,11 @@
   <title>Blaasteroids</title>
 
   <!-- Favicons -->
-  <link rel="icon" href="/favicon.ico" sizes="any" />
+  <link rel="icon" href="favicon.ico" />
+
   <link rel="icon" type="image/png" sizes="32x32" href="/icon.png?v=4" />
   <link rel="apple-touch-icon" href="/icon.png?v=4" />
 
-  <!-- Optional: browser UI color -->
   <meta name="theme-color" content="#070a16" />
 
   <style>
@@ -18,6 +18,7 @@
       height: 100%;
       margin: 0;
       background: #070a16;
+      overflow: hidden;
     }
     #game {
       width: 100%;
@@ -25,7 +26,11 @@
       display: grid;
       place-items: center;
     }
-    canvas { outline: none; }
+    canvas {
+      outline: none;
+      /* IMPORTANT for mobile: prevents scroll/zoom gestures interfering */
+      touch-action: none;
+    }
     .hint {
       position: fixed;
       left: 12px;
@@ -34,6 +39,7 @@
       font: 14px/1.35 system-ui, -apple-system, Segoe UI, Roboto, Arial;
       opacity: 0.9;
       user-select: none;
+      pointer-events: none;
     }
   </style>
 
@@ -44,7 +50,7 @@
 <div id="game"></div>
 <div class="hint">
   Thrust: <b>W / ↑</b> · Turn: <b>A / D</b> · Shoot: <b>Space</b> · Restart: <b>R</b><br/>
-  Destroy asteroids → difficulty increases (every 10 kills)
+  On mobile: left stick = turn/thrust, right circle = fire
 </div>
 
 <script>
@@ -59,7 +65,14 @@ const ASTEROID_BASE_SPEED = 120;     // base drift speed
 const ASTEROID_LEVEL_SPEED = 10;     // extra speed per level (gentle)
 const ASTEROID_MAX_SPEED = 240;      // hard cap
 const ASTEROID_SIZE_MIN = 34;        // px
-const ASTEROID_SIZE_MAX = 76;        // px (slightly reduced)
+const ASTEROID_SIZE_MAX = 76;        // px
+
+// Mobile controls
+const MOBILE_BREAKPOINT = 820;
+const STICK_RADIUS = 64;
+const STICK_DEADZONE = 10;
+const THRUST_THRESHOLD = 18;
+const FIRE_COOLDOWN_MS = 120; // auto fire rate while holding
 
 const config = {
   type: Phaser.AUTO,
@@ -70,6 +83,14 @@ const config = {
   physics: {
     default: "arcade",
     arcade: { debug:false, gravity:{ y: 0 } }
+  },
+  // (Optional) "responsive" presentation without rewriting gameplay:
+  // keeps world at 900x540, fits canvas to screen.
+  scale: {
+    mode: Phaser.Scale.FIT,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+    width: W,
+    height: H
   },
   scene: { preload, create, update }
 };
@@ -82,8 +103,6 @@ function preload() {
   this.load.image("bullet", "bullet.png");
 
   const g = this.make.graphics({ add: false });
-
- 
 
   // Debris puff
   g.clear();
@@ -118,23 +137,18 @@ function create(){
   });
 
   // Ship
- // 🔥 TIGHT SHIP COLLISION (smaller than sprite)
+  s.ship = s.physics.add.sprite(W/2, H/2, "ship");
+  s.ship.setDisplaySize(75, 75);
+  s.ship.setDepth(3);
+  s.ship.body.setAllowGravity(false);
 
-// Ship
-s.ship = s.physics.add.sprite(W/2, H/2, "ship");
-s.ship.setDisplaySize(75, 75);
-s.ship.setDepth(3);
-s.ship.body.setAllowGravity(false);
-
-// 🔥 Tight ship collision (smaller than sprite)
-const shipRadius = 25; // tweak 16–20
-s.ship.body.setCircle(
-  shipRadius,
-  (s.ship.displayWidth / 2) - shipRadius,
-  (s.ship.displayHeight / 2) - shipRadius
-);
-
-
+  // Tight ship collision
+  const shipRadius = 20; // tweak 16–22
+  s.ship.body.setCircle(
+    shipRadius,
+    (s.ship.displayWidth / 2) - shipRadius,
+    (s.ship.displayHeight / 2) - shipRadius
+  );
 
   // Drift / inertia
   s.ship.setDrag(18, 18);
@@ -161,7 +175,6 @@ s.ship.body.setCircle(
   s.physics.add.overlap(s.bullets, s.asteroids, (b, a) => {
     if (!b.active || !a.active) return;
     b.destroy();
-
     destroyAsteroid(s, a);
 
     s.kills++;
@@ -186,9 +199,31 @@ s.ship.body.setCircle(
   spawnAsteroid(s, true);
   spawnAsteroid(s);
   spawnAsteroid(s);
+
+  // ---------------------------
+  // MOBILE CONTROLS (2 circles)
+  // ---------------------------
+
+  s.isMobileControls =
+    (typeof window !== "undefined") &&
+    (window.innerWidth <= MOBILE_BREAKPOINT) &&
+    (s.sys.game.device.input.touch === true);
+
+  // Multi-touch support (turn+fire together)
+  s.input.addPointer(2);
+
+  // State flags used by update()
+  s.touchTurn = 0;      // -1 left, +1 right
+  s.touchThrust = false;
+  s.touchFire = false;
+  s.fireCooldown = 0;
+
+  if (s.isMobileControls) {
+    createMobileControls(s);
+  }
 }
 
-function update(){
+function update(time, delta){
   const s = this;
   if (!s.alive) return;
 
@@ -197,13 +232,17 @@ function update(){
     return;
   }
 
+  // --- Inputs (keyboard + mobile) ---
+  const turnLeft  = s.keys.A.isDown || (s.touchTurn < 0);
+  const turnRight = s.keys.D.isDown || (s.touchTurn > 0);
+  const thrusting = s.keys.W.isDown || s.cursors.up.isDown || s.touchThrust;
+
   // Turn
-  if (s.keys.A.isDown) s.ship.setAngularVelocity(-240);
-  else if (s.keys.D.isDown) s.ship.setAngularVelocity(240);
+  if (turnLeft) s.ship.setAngularVelocity(-240);
+  else if (turnRight) s.ship.setAngularVelocity(240);
   else s.ship.setAngularVelocity(0);
 
-  // Thrust forward (ship points up visually, so rotation - PI/2)
-  const thrusting = s.keys.W.isDown || s.cursors.up.isDown;
+  // Thrust
   if (thrusting) {
     const ang = s.ship.rotation - Math.PI/2;
     const ax = Math.cos(ang) * 520;
@@ -213,8 +252,19 @@ function update(){
     s.ship.setAcceleration(0,0);
   }
 
-  // Shoot
-  if (Phaser.Input.Keyboard.JustDown(s.keys.SPACE)) shoot(s);
+  // Shoot (space OR hold fire button)
+  const wantsFire = Phaser.Input.Keyboard.JustDown(s.keys.SPACE) || s.touchFire;
+
+  if (s.fireCooldown > 0) s.fireCooldown -= delta;
+
+  if (wantsFire) {
+    // Space = immediate shot, TouchFire = auto with cooldown
+    const canShoot = Phaser.Input.Keyboard.JustDown(s.keys.SPACE) || (s.fireCooldown <= 0);
+    if (canShoot) {
+      shoot(s);
+      s.fireCooldown = FIRE_COOLDOWN_MS;
+    }
+  }
 
   // Wrap
   wrap(s.ship);
@@ -227,7 +277,7 @@ function update(){
     wrap(b);
   });
 
-  // Difficulty scaling (slower spawn ramp + higher minimum delay)
+  // Difficulty scaling (spawn)
   s.spawnTimer.delay = Math.max(
     SPAWN_MIN_DELAY,
     SPAWN_START_DELAY - s.level * SPAWN_LEVEL_STEP
@@ -246,19 +296,17 @@ function shoot(s){
   b.setDrag(0, 0);
   b.life = 90;
 
-  // 🔹 BULLET SIZE + COLLIDER (this is what we just adjusted)
-  b.setDisplaySize(100 , 50);   // visual size
-  b.body.setCircle(2);       // collision radius
-  b.body.setOffset(
-    (b.width - 4) / 2,
-    (b.height - 4) / 2         
-  );
+  // ✅ Bullet size (small + crisp)
+  b.setDisplaySize(60, 25);
+  // Collider uses texture pixels; keep it tiny and centered
+  b.body.setCircle(3);
+  b.body.setOffset((b.width - 6) / 2, (b.height - 6) / 2);
 
-  // Optional glow polish
-  b.setAlpha(0.9);
+  // Glow vibe
+  b.setAlpha(0.92);
   b.setBlendMode(Phaser.BlendModes.ADD);
 
-  // spawn in front of ship
+  // spawn in front of ship    
   b.x += Math.cos(ang) * 28;
   b.y += Math.sin(ang) * 28;
 
@@ -269,11 +317,8 @@ function shoot(s){
   b.setRotation(s.ship.rotation);
 }
 
-
-
-
 // -------------------------
-// ASTEROIDS (sprite size + gentle speed)
+// ASTEROIDS
 // -------------------------
 
 function spawnAsteroid(s, inside=false, forcedSize=null, forcedVel=null){
@@ -305,31 +350,27 @@ function spawnAsteroid(s, inside=false, forcedSize=null, forcedVel=null){
   a.body.setAllowGravity(false);
   a.setDrag(0, 0);
 
-  // Size (pixels)
+  // Size (display pixels)
   const size = forcedSize ?? Phaser.Math.Between(ASTEROID_SIZE_MIN, ASTEROID_SIZE_MAX);
   a.setDisplaySize(size, size);
   a.setData("size", size);
 
-  // ✅ FIXED COLLIDER:
-  // setCircle must be in TEXTURE pixels, not display pixels.
-  const texR = a.width * 0.45; // based on source image
+  // Collider (texture pixel space)
+  const texR = a.width * 0.45;
   a.body.setCircle(texR);
   a.body.setOffset((a.width - texR * 2) / 2, (a.height - texR * 2) / 2);
 
-  // Random start rotation
+  // Random rotation
   a.setRotation(Phaser.Math.FloatBetween(0, Math.PI * 2));
 
-  // ✅ Brighter tint by size (less dark than before)
- // Subtle brightness bump (still looks like stone)
-if (size >= 64) a.setTint(0xa3b1c2);      // large – lighter slate
-else if (size >= 46) a.setTint(0xd8e1ea); // medium – light stone
-else a.setTint(0xf6f9fc);                 // small – near-white highlight
-                // bright small
+  // Brighter tint by size
+  if (size >= 64) a.setTint(0xa3b1c2);
+  else if (size >= 46) a.setTint(0xd8e1ea);
+  else a.setTint(0xf6f9fc);
 
-  // Add to group
   s.asteroids.add(a);
 
-  // Velocity (gentler + capped)
+  // Velocity (gentle + capped)
   if (forcedVel) {
     a.setVelocity(forcedVel.x, forcedVel.y);
   } else {
@@ -343,25 +384,20 @@ else a.setTint(0xf6f9fc);                 // small – near-white highlight
     a.setVelocity(Math.cos(ang) * speed, Math.sin(ang) * speed);
   }
 
-  // Spin (gentler)
   const spin = Phaser.Math.Between(-140, 140) * Phaser.Math.Clamp(70 / size, 0.75, 1.25);
   a.setAngularVelocity(spin);
 
   return a;
 }
 
-
 function destroyAsteroid(s, a){
   const size = a.getData("size") ?? a.displayWidth ?? 60;
 
-  // Debris proportional to size
   const debrisCount = Math.floor(Phaser.Math.Clamp(6 + (size / 4), 8, 30));
   if (s.particles) s.particles.emitParticleAt(a.x, a.y, debrisCount);
 
-  // Screen shake only for big
   if (size >= 64) s.cameras.main.shake(120, 0.006);
 
-  // Split big -> medium -> small
   if (size >= 64) {
     splitAsteroid(s, a, Math.floor(size * 0.68), 2);
   } else if (size >= 46) {
@@ -378,7 +414,7 @@ function splitAsteroid(s, parent, childSize, count){
 
   for (let i = 0; i < count; i++) {
     const ang = Phaser.Math.FloatBetween(0, Math.PI * 2);
-    const burst = Phaser.Math.FloatBetween(70, 120); // was 90-160, now gentler
+    const burst = Phaser.Math.FloatBetween(70, 120);
 
     const vx = pvx * 0.55 + Math.cos(ang) * burst;
     const vy = pvy * 0.55 + Math.sin(ang) * burst;
@@ -413,6 +449,113 @@ function gameOver(s){
     `💥 SHIP DESTROYED\nScore: ${s.score}\n\nPress R to restart`,
     { fontFamily:"system-ui", fontSize:"28px", color:"#fff", align:"center" }
   ).setOrigin(0.5);
+}
+
+// -------------------------
+// Mobile UI (2 circles)
+// -------------------------
+
+function createMobileControls(s) {
+  // UI positions inside the fixed 900x540 world
+  const pad = 70;
+  const leftX = pad + STICK_RADIUS;
+  const leftY = H - (pad);
+
+  const rightX = W - (pad);
+  const rightY = H - (pad);
+
+  // Left stick visuals
+  const base = s.add.circle(leftX, leftY, STICK_RADIUS, 0xffffff, 0.10)
+    .setDepth(999)
+    .setScrollFactor(0);
+
+  const ring = s.add.circle(leftX, leftY, STICK_RADIUS + 4, 0x93c5fd, 0.12)
+    .setDepth(999)
+    .setScrollFactor(0);
+
+  const nub = s.add.circle(leftX, leftY, 22, 0xcfe3ff, 0.22)
+    .setDepth(1000)
+    .setScrollFactor(0);
+
+  // Right fire button
+  const fire = s.add.circle(rightX, rightY, 52, 0xfbbf24, 0.12)
+    .setDepth(999)
+    .setScrollFactor(0);
+
+  const fireRing = s.add.circle(rightX, rightY, 58, 0xfbbf24, 0.08)
+    .setDepth(998)
+    .setScrollFactor(0);
+
+  // Interactivity
+  base.setInteractive(new Phaser.Geom.Circle(leftX, leftY, STICK_RADIUS), Phaser.Geom.Circle.Contains);
+  fire.setInteractive(new Phaser.Geom.Circle(rightX, rightY, 52), Phaser.Geom.Circle.Contains);
+
+  // Track joystick pointer
+  s.joyPointerId = null;
+
+  base.on("pointerdown", (p) => {
+    s.joyPointerId = p.id;
+  });
+
+  s.input.on("pointerup", (p) => {
+    if (p.id === s.joyPointerId) {
+      s.joyPointerId = null;
+      s.touchTurn = 0;
+      s.touchThrust = false;
+      nub.setPosition(leftX, leftY);
+    }
+  });
+
+  s.input.on("pointermove", (p) => {
+    if (s.joyPointerId === null) return;
+    if (p.id !== s.joyPointerId) return;
+
+    const dx = p.worldX - leftX;
+    const dy = p.worldY - leftY;
+
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    const clamped = Math.min(dist, STICK_RADIUS);
+
+    const nx = dist > 0 ? (dx / dist) : 0;
+    const ny = dist > 0 ? (dy / dist) : 0;
+
+    nub.setPosition(leftX + nx * clamped, leftY + ny * clamped);
+
+    // Convert stick into actions
+    s.touchTurn = 0;
+    s.touchThrust = false;
+
+    if (Math.abs(dx) > STICK_DEADZONE) {
+      s.touchTurn = dx < 0 ? -1 : 1;
+    }
+    // thrust when pushing up enough
+    if (dy < -THRUST_THRESHOLD) {
+      s.touchThrust = true;
+    }
+  });
+
+  // Fire button hold
+  fire.on("pointerdown", () => {
+    s.touchFire = true;
+    fire.setAlpha(0.18);
+    fireRing.setAlpha(0.12);
+  });
+
+  fire.on("pointerup", () => {
+    s.touchFire = false;
+    fire.setAlpha(0.12);
+    fireRing.setAlpha(0.08);
+  });
+
+  fire.on("pointerout", () => {
+    // if finger slides off
+    s.touchFire = false;
+    fire.setAlpha(0.12);
+    fireRing.setAlpha(0.08);
+  });
+
+  // Keep references if you want to tweak later
+  s.mobileUI = { base, ring, nub, fire, fireRing };
 }
 </script>
 
