@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Blaasteroids</title>
 
-  <link rel="icon" href="/icon.png?v=1" />
+  <link rel="icon" href="/icon.png?v=4" />
   <style>
     html, body { height:100%; margin:0; background:#070a16; }
     #game { width:100%; height:100%; display:grid; place-items:center; }
@@ -15,6 +15,7 @@
       color:#cfe3ff;
       font:14px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Arial;
       opacity:.9;
+      user-select:none;
     }
   </style>
 
@@ -24,7 +25,7 @@
 <div id="game"></div>
 <div class="hint">
   Thrust: <b>W / ↑</b> · Turn: <b>A / D</b> · Shoot: <b>Space</b> · Restart: <b>R</b><br/>
-  Destroy asteroids → difficulty increases
+  Destroy asteroids → difficulty increases (every 10 kills)
 </div>
 
 <script>
@@ -36,7 +37,10 @@ const config = {
   width: W,
   height: H,
   backgroundColor: "#070a16",
-  physics: { default: "arcade", arcade: { debug:false } },
+  physics: {
+    default: "arcade",
+    arcade: { debug:false, gravity:{ y: 0 } }
+  },
   scene: { preload, create, update }
 };
 
@@ -45,7 +49,7 @@ new Phaser.Game(config);
 function preload(){
   const g = this.make.graphics({ add:false });
 
-  // Ship
+  // Ship (triangle)
   g.clear();
   g.fillStyle(0x60a5fa,1);
   g.beginPath();
@@ -68,8 +72,8 @@ function preload(){
   // Bullet
   g.clear();
   g.fillStyle(0xfbbf24,1);
-  g.fillRect(0,0,6,2);
-  g.generateTexture("bullet",6,2);
+  g.fillRect(0,0,10,4);
+  g.generateTexture("bullet",10,4);
 }
 
 function create(){
@@ -83,12 +87,20 @@ function create(){
   s.cursors = s.input.keyboard.createCursorKeys();
   s.keys = s.input.keyboard.addKeys("A,D,W,SPACE,R");
 
+  // Prevent browser stealing Space/Arrows
+  ["SPACE","UP","DOWN","LEFT","RIGHT"].forEach(k=>{
+    s.input.keyboard.on("keydown-" + k, e => e.preventDefault());
+  });
+
   // Ship
-  s.ship = s.physics.add.sprite(W/2,H/2,"ship");
-  s.ship.setDamping(true);
-  s.ship.setDrag(0.98);
-  s.ship.setMaxVelocity(320);
-  s.ship.setCollideWorldBounds(false);
+  s.ship = s.physics.add.sprite(W/2, H/2, "ship");
+  s.ship.setDepth(3);
+  s.ship.body.setAllowGravity(false);
+
+  // ✅ Drift / inertia (pure Arcade):
+  // lower drag = more drift; higher = tighter
+  s.ship.setDrag(18, 18);
+  s.ship.setMaxVelocity(420);
 
   // Groups
   s.asteroids = s.physics.add.group();
@@ -96,13 +108,20 @@ function create(){
 
   // HUD
   s.hud = s.add.text(14,12,"",{
-    fontFamily:"system-ui",
+    fontFamily:"system-ui,-apple-system,Segoe UI,Roboto,Arial",
     fontSize:"16px",
     color:"#cfe3ff"
   }).setDepth(10);
 
+  s.hud2 = s.add.text(14,36,"",{
+    fontFamily:"system-ui,-apple-system,Segoe UI,Roboto,Arial",
+    fontSize:"13px",
+    color:"#93c5fd"
+  }).setDepth(10);
+
   // Collisions
   s.physics.add.overlap(s.bullets, s.asteroids, (b,a)=>{
+    if (!b.active || !a.active) return;
     b.destroy();
     a.destroy();
     s.kills++;
@@ -118,93 +137,166 @@ function create(){
     loop:true,
     callback: ()=>spawnAsteroid(s)
   });
+
+  // ✅ Guaranteed visible start asteroid (in-bounds)
+  spawnAsteroid(s, true);
+  // plus a couple normal ones
+  spawnAsteroid(s);
+  spawnAsteroid(s);
 }
 
-function update(_,dt){
+function update(){
   const s = this;
   if (!s.alive) return;
 
   if (Phaser.Input.Keyboard.JustDown(s.keys.R)) {
-    s.scene.restart(); return;
+    s.scene.restart();
+    return;
   }
 
-  // Controls
-  if (s.keys.A.isDown) s.ship.setAngularVelocity(-200);
-  else if (s.keys.D.isDown) s.ship.setAngularVelocity(200);
+  // Turn
+  if (s.keys.A.isDown) s.ship.setAngularVelocity(-240);
+  else if (s.keys.D.isDown) s.ship.setAngularVelocity(240);
   else s.ship.setAngularVelocity(0);
 
-  if (s.keys.W.isDown || s.cursors.up.isDown) {
-    s.physics.velocityFromRotation(
-      s.ship.rotation - Math.PI/2,
-      260,
-      s.ship.body.acceleration
-    );
+  // Thrust forward (ship points up visually, so rotation - PI/2)
+  const thrusting = s.keys.W.isDown || s.cursors.up.isDown;
+  if (thrusting) {
+    const ang = s.ship.rotation - Math.PI/2;
+    const ax = Math.cos(ang) * 520;
+    const ay = Math.sin(ang) * 520;
+    s.ship.setAcceleration(ax, ay);
   } else {
-    s.ship.setAcceleration(0);
+    s.ship.setAcceleration(0,0);
   }
 
   // Shoot
   if (Phaser.Input.Keyboard.JustDown(s.keys.SPACE)) shoot(s);
 
+  // Wrap
   wrap(s.ship);
   s.asteroids.getChildren().forEach(wrap);
+
   s.bullets.getChildren().forEach(b=>{
     if (!b.active) return;
-    if (b.life-- <= 0) b.destroy();
+    b.life--;
+    if (b.life <= 0) b.destroy();
     wrap(b);
   });
 
   // Difficulty scaling
-  s.spawnTimer.delay = Math.max(300, 900 - s.level*80);
+  s.spawnTimer.delay = Math.max(260, 900 - s.level * 80);
 
-  s.hud.setText(
-    `Score: ${s.score}   Asteroids: ${s.kills}   Level: ${s.level}`
-  );
+  s.hud.setText(`Score: ${s.score}   Kills: ${s.kills}   Level: ${s.level}`);
+  s.hud2.setText(`Asteroids: ${s.asteroids.getLength()}   Bullets: ${s.bullets.getLength()}`);
 }
 
 function shoot(s){
-  const b = s.physics.add.sprite(s.ship.x,s.ship.y,"bullet");
-  b.setAngle(Phaser.Math.RadToDeg(s.ship.rotation));
-  b.life = 70;
-  s.physics.velocityFromRotation(
-    s.ship.rotation - Math.PI/2,
-    520,
-    b.body.velocity
-  );
+  const ang = s.ship.rotation - Math.PI / 2;
+
+  const b = s.physics.add.sprite(s.ship.x, s.ship.y, "bullet");
+  b.setDepth(4);
+  b.body.setAllowGravity(false);
+  b.setDrag(0, 0);
+  b.life = 90;
+
+  // spawn in front of ship
+  b.x += Math.cos(ang) * 22;
+  b.y += Math.sin(ang) * 22;
+
+  // ✅ add to group FIRST, then apply velocity (prevents group reset wiping it)
   s.bullets.add(b);
+
+  const speed = 720;
+  b.setVelocity(Math.cos(ang) * speed, Math.sin(ang) * speed);
+
+  b.setRotation(s.ship.rotation);
 }
 
-function spawnAsteroid(s){
+
+
+function spawnAsteroid(s, inside=false){
   if (!s.alive) return;
-  const edge = Phaser.Math.Between(0,3);
-  let x,y;
-  if (edge===0){ x=-40; y=Math.random()*H; }
-  if (edge===1){ x=W+40; y=Math.random()*H; }
-  if (edge===2){ x=Math.random()*W; y=-40; }
-  if (edge===3){ x=Math.random()*W; y=H+40; }
 
-  const a = s.physics.add.sprite(x,y,"asteroid");
-  const speed = 80 + s.level*30;
-  const angle = Phaser.Math.FloatBetween(0,Math.PI*2);
-  s.physics.velocityFromRotation(angle,speed,a.body.velocity);
-  a.setAngularVelocity(Phaser.Math.Between(-120,120));
+  const pad = 30;
+  let x, y;
+
+  if (inside) {
+    let tries = 0;
+    do {
+      x = Phaser.Math.Between(120, W - 120);
+      y = Phaser.Math.Between(120, H - 120);
+      tries++;
+    } while (
+      tries < 30 &&
+      Phaser.Math.Distance.Between(x, y, s.ship.x, s.ship.y) < 200
+    );
+  } else {
+    const edge = Phaser.Math.Between(0, 3);
+    if (edge === 0) { x = -pad;   y = Phaser.Math.Between(0, H); }
+    if (edge === 1) { x = W+pad;  y = Phaser.Math.Between(0, H); }
+    if (edge === 2) { x = Phaser.Math.Between(0, W); y = -pad; }
+    if (edge === 3) { x = Phaser.Math.Between(0, W); y = H+pad; }
+  }
+
+  const a = s.physics.add.sprite(x, y, "asteroid");
+  a.setDepth(2);
+  a.body.setAllowGravity(false);
+
+  // 🔹 RANDOM SIZE
+  const scale = Phaser.Math.FloatBetween(0.55, 1.25);
+  a.setScale(scale);
+
+  // 🔹 collision size matches visual
+  const radius = 18 * scale;
+  a.setCircle(radius, 20 - radius, 20 - radius);
+
+  a.setDrag(0, 0);
+
+  // add to group first (important)
   s.asteroids.add(a);
+
+  // 🔹 direction toward center with wobble
+  const toCenter = Phaser.Math.Angle.Between(x, y, W/2, H/2);
+  const ang = toCenter + Phaser.Math.FloatBetween(-0.8, 0.8);
+
+  // 🔹 speed scales with size (big = slower)
+  const baseSpeed = 160 + s.level * 28;
+  const speed = baseSpeed * Phaser.Math.Clamp(1.4 - scale, 0.6, 1.2);
+
+  a.setVelocity(
+    Math.cos(ang) * speed,
+    Math.sin(ang) * speed
+  );
+
+  // 🔹 rotation scales with size
+  a.setAngularVelocity(
+    Phaser.Math.Between(-160, 160) * Phaser.Math.Clamp(1.3 - scale, 0.6, 1.2)
+  );
 }
+
+
 
 function wrap(obj){
-  if (obj.x < -40) obj.x = W+40;
-  if (obj.x > W+40) obj.x = -40;
-  if (obj.y < -40) obj.y = H+40;
-  if (obj.y > H+40) obj.y = -40;
+  const pad = 40;
+  if (obj.x <= -pad) obj.x = W + pad;
+  if (obj.x >= W + pad) obj.x = -pad;
+  if (obj.y <= -pad) obj.y = H + pad;
+  if (obj.y >= H + pad) obj.y = -pad;
 }
 
 function gameOver(s){
   s.alive = false;
   s.spawnTimer.paused = true;
+
   s.ship.setTint(0xff4d4d);
-  s.add.text(W/2,H/2,
-    `💥 SHIP DESTROYED\nScore: ${s.score}\n\nPress R`,
-    { fontSize:"28px", color:"#fff", align:"center" }
+  s.ship.setAcceleration(0,0);
+  s.ship.setVelocity(0,0);
+  s.ship.setAngularVelocity(0);
+
+  s.add.text(W/2, H/2,
+    `💥 SHIP DESTROYED\nScore: ${s.score}\n\nPress R to restart`,
+    { fontFamily:"system-ui", fontSize:"28px", color:"#fff", align:"center" }
   ).setOrigin(0.5);
 }
 </script>
