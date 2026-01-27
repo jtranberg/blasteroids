@@ -50,6 +50,17 @@
 <script>
 const W = 900, H = 540;
 
+// Tuning knobs (easy to tweak)
+const ASTEROID_MAX_ON_SCREEN = 14;
+const SPAWN_START_DELAY = 1100;      // ms at level 1
+const SPAWN_MIN_DELAY   = 650;       // ms fastest it can get
+const SPAWN_LEVEL_STEP  = 40;        // ms reduction per level
+const ASTEROID_BASE_SPEED = 120;     // base drift speed
+const ASTEROID_LEVEL_SPEED = 10;     // extra speed per level (gentle)
+const ASTEROID_MAX_SPEED = 240;      // hard cap
+const ASTEROID_SIZE_MIN = 34;        // px
+const ASTEROID_SIZE_MAX = 76;        // px (slightly reduced)
+
 const config = {
   type: Phaser.AUTO,
   parent: "game",
@@ -65,36 +76,16 @@ const config = {
 
 new Phaser.Game(config);
 
-function preload(){
-  const g = this.make.graphics({ add:false });
+function preload() {
+  this.load.image("ship", "ship.png");
+  this.load.image("asteroid", "asteroid.png");
+  this.load.image("bullet", "bullet.png");
 
-  // Ship (triangle)
-  g.clear();
-  g.fillStyle(0x60a5fa,1);
-  g.beginPath();
-  g.moveTo(16,0);
-  g.lineTo(32,32);
-  g.lineTo(16,24);
-  g.lineTo(0,32);
-  g.closePath();
-  g.fillPath();
-  g.generateTexture("ship",32,32);
+  const g = this.make.graphics({ add: false });
 
-  // Asteroid
-  g.clear();
-  g.fillStyle(0x94a3b8,1);
-  g.fillCircle(20,20,18);
-  g.lineStyle(2,0x070a16,0.4);
-  g.strokeCircle(20,20,18);
-  g.generateTexture("asteroid",40,40);
+ 
 
-  // Bullet
-  g.clear();
-  g.fillStyle(0xfbbf24,1);
-  g.fillRect(0,0,10,4);
-  g.generateTexture("bullet",10,4);
-
-  // Debris puff particle
+  // Debris puff
   g.clear();
   g.fillStyle(0xffffff, 1);
   g.fillCircle(4, 4, 4);
@@ -128,6 +119,7 @@ function create(){
 
   // Ship
   s.ship = s.physics.add.sprite(W/2, H/2, "ship");
+  s.ship.setDisplaySize(60, 60); // was 75; slightly less chunky
   s.ship.setDepth(3);
   s.ship.body.setAllowGravity(false);
 
@@ -152,7 +144,7 @@ function create(){
     color:"#93c5fd"
   }).setDepth(10);
 
-  // Collisions (WITH MAGIC)
+  // Collisions
   s.physics.add.overlap(s.bullets, s.asteroids, (b, a) => {
     if (!b.active || !a.active) return;
     b.destroy();
@@ -166,14 +158,18 @@ function create(){
 
   s.physics.add.overlap(s.ship, s.asteroids, ()=>gameOver(s));
 
-  // Spawn timer
+  // Spawn timer (with max-on-screen cap)
   s.spawnTimer = s.time.addEvent({
-    delay: 900,
+    delay: SPAWN_START_DELAY,
     loop:true,
-    callback: ()=>spawnAsteroid(s)
+    callback: ()=>{
+      if (!s.alive) return;
+      if (s.asteroids.getLength() >= ASTEROID_MAX_ON_SCREEN) return;
+      spawnAsteroid(s);
+    }
   });
 
-  // Guaranteed visible start asteroid (in-bounds)
+  // Guaranteed visible start asteroids (in-bounds)
   spawnAsteroid(s, true);
   spawnAsteroid(s);
   spawnAsteroid(s);
@@ -218,8 +214,11 @@ function update(){
     wrap(b);
   });
 
-  // Difficulty scaling
-  s.spawnTimer.delay = Math.max(260, 900 - s.level * 80);
+  // Difficulty scaling (slower spawn ramp + higher minimum delay)
+  s.spawnTimer.delay = Math.max(
+    SPAWN_MIN_DELAY,
+    SPAWN_START_DELAY - s.level * SPAWN_LEVEL_STEP
+  );
 
   s.hud.setText(`Score: ${s.score}   Kills: ${s.kills}   Level: ${s.level}`);
   s.hud2.setText(`Asteroids: ${s.asteroids.getLength()}   Bullets: ${s.bullets.getLength()}`);
@@ -234,11 +233,22 @@ function shoot(s){
   b.setDrag(0, 0);
   b.life = 90;
 
-  // spawn in front of ship
-  b.x += Math.cos(ang) * 22;
-  b.y += Math.sin(ang) * 22;
+  // 🔹 BULLET SIZE + COLLIDER (this is what we just adjusted)
+  b.setDisplaySize(100 , 50);   // visual size
+  b.body.setCircle(2);       // collision radius
+  b.body.setOffset(
+    (b.width - 4) / 2,
+    (b.height - 4) / 2         
+  );
 
-  // IMPORTANT: add to group first, THEN set velocity
+  // Optional glow polish
+  b.setAlpha(0.9);
+  b.setBlendMode(Phaser.BlendModes.ADD);
+
+  // spawn in front of ship
+  b.x += Math.cos(ang) * 28;
+  b.y += Math.sin(ang) * 28;
+
   s.bullets.add(b);
 
   const speed = 720;
@@ -246,11 +256,14 @@ function shoot(s){
   b.setRotation(s.ship.rotation);
 }
 
+
+
+
 // -------------------------
-// ASTEROIDS (random size + tint + split)
+// ASTEROIDS (sprite size + gentle speed)
 // -------------------------
 
-function spawnAsteroid(s, inside=false, forcedScale=null, forcedVel=null){
+function spawnAsteroid(s, inside=false, forcedSize=null, forcedVel=null){
   if (!s.alive) return;
 
   const pad = 30;
@@ -279,77 +292,85 @@ function spawnAsteroid(s, inside=false, forcedScale=null, forcedVel=null){
   a.body.setAllowGravity(false);
   a.setDrag(0, 0);
 
-  // Size
-  const scale = forcedScale ?? Phaser.Math.FloatBetween(0.55, 1.25);
-  a.setScale(scale);
-  a.setData("scale", scale);
+  // Size (pixels)
+  const size = forcedSize ?? Phaser.Math.Between(ASTEROID_SIZE_MIN, ASTEROID_SIZE_MAX);
+  a.setDisplaySize(size, size);
+  a.setData("size", size);
 
-  // Tint by size (small brighter, big darker)
-  if (scale >= 1.05) a.setTint(0x64748b);
-  else if (scale >= 0.80) a.setTint(0x94a3b8);
-  else a.setTint(0xcbd5e1);
+  // ✅ FIXED COLLIDER:
+  // setCircle must be in TEXTURE pixels, not display pixels.
+  const texR = a.width * 0.45; // based on source image
+  a.body.setCircle(texR);
+  a.body.setOffset((a.width - texR * 2) / 2, (a.height - texR * 2) / 2);
 
-  // Collision circle matches visual
-  const radius = 18 * scale;
-  a.setCircle(radius, 20 - radius, 20 - radius);
+  // Random start rotation
+  a.setRotation(Phaser.Math.FloatBetween(0, Math.PI * 2));
 
-  // IMPORTANT: add to group first
+  // ✅ Brighter tint by size (less dark than before)
+ // Subtle brightness bump (still looks like stone)
+if (size >= 64) a.setTint(0xa3b1c2);      // large – lighter slate
+else if (size >= 46) a.setTint(0xd8e1ea); // medium – light stone
+else a.setTint(0xf6f9fc);                 // small – near-white highlight
+                // bright small
+
+  // Add to group
   s.asteroids.add(a);
 
-  // Velocity
+  // Velocity (gentler + capped)
   if (forcedVel) {
     a.setVelocity(forcedVel.x, forcedVel.y);
   } else {
     const toCenter = Phaser.Math.Angle.Between(x, y, W/2, H/2);
     const ang = toCenter + Phaser.Math.FloatBetween(-0.8, 0.8);
 
-    const baseSpeed = 160 + s.level * 28;
-    const speed = baseSpeed * Phaser.Math.Clamp(1.4 - scale, 0.6, 1.2);
+    const baseSpeed = ASTEROID_BASE_SPEED + s.level * ASTEROID_LEVEL_SPEED;
+    const sizeFactor = Phaser.Math.Clamp(70 / size, 0.85, 1.25);
+    const speed = Math.min(ASTEROID_MAX_SPEED, baseSpeed * sizeFactor);
 
     a.setVelocity(Math.cos(ang) * speed, Math.sin(ang) * speed);
   }
 
-  // Rotation scales with size
-  a.setAngularVelocity(
-    Phaser.Math.Between(-160, 160) * Phaser.Math.Clamp(1.3 - scale, 0.6, 1.2)
-  );
+  // Spin (gentler)
+  const spin = Phaser.Math.Between(-140, 140) * Phaser.Math.Clamp(70 / size, 0.75, 1.25);
+  a.setAngularVelocity(spin);
 
   return a;
 }
 
+
 function destroyAsteroid(s, a){
-  const scale = a.getData("scale") ?? a.scaleX ?? 1;
+  const size = a.getData("size") ?? a.displayWidth ?? 60;
 
   // Debris proportional to size
-  const debrisCount = Math.floor(Phaser.Math.Clamp(8 + scale * 18, 8, 28));
+  const debrisCount = Math.floor(Phaser.Math.Clamp(6 + (size / 4), 8, 30));
   if (s.particles) s.particles.emitParticleAt(a.x, a.y, debrisCount);
 
-  // Screen shake only for large
-  if (scale >= 1.05) s.cameras.main.shake(120, 0.006);
+  // Screen shake only for big
+  if (size >= 64) s.cameras.main.shake(120, 0.006);
 
-  // Split: big -> medium -> small
-  if (scale >= 0.95) {
-    splitAsteroid(s, a, scale * 0.68, 2);
-  } else if (scale >= 0.72) {
-    splitAsteroid(s, a, scale * 0.72, 2);
+  // Split big -> medium -> small
+  if (size >= 64) {
+    splitAsteroid(s, a, Math.floor(size * 0.68), 2);
+  } else if (size >= 46) {
+    splitAsteroid(s, a, Math.floor(size * 0.72), 2);
   }
 
   a.destroy();
 }
 
-function splitAsteroid(s, parent, childScale, count){
+function splitAsteroid(s, parent, childSize, count){
   const px = parent.x, py = parent.y;
   const pvx = parent.body?.velocity?.x ?? 0;
   const pvy = parent.body?.velocity?.y ?? 0;
 
   for (let i = 0; i < count; i++) {
     const ang = Phaser.Math.FloatBetween(0, Math.PI * 2);
-    const burst = Phaser.Math.FloatBetween(90, 160);
+    const burst = Phaser.Math.FloatBetween(70, 120); // was 90-160, now gentler
 
     const vx = pvx * 0.55 + Math.cos(ang) * burst;
     const vy = pvy * 0.55 + Math.sin(ang) * burst;
 
-    const frag = spawnAsteroid(s, true, childScale, { x: vx, y: vy });
+    const frag = spawnAsteroid(s, true, childSize, { x: vx, y: vy });
     frag.setPosition(px, py);
   }
 }
