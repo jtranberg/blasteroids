@@ -118,10 +118,23 @@ function create(){
   });
 
   // Ship
-  s.ship = s.physics.add.sprite(W/2, H/2, "ship");
-  s.ship.setDisplaySize(60, 60); // was 75; slightly less chunky
-  s.ship.setDepth(3);
-  s.ship.body.setAllowGravity(false);
+ // 🔥 TIGHT SHIP COLLISION (smaller than sprite)
+
+// Ship
+s.ship = s.physics.add.sprite(W/2, H/2, "ship");
+s.ship.setDisplaySize(75, 75);
+s.ship.setDepth(3);
+s.ship.body.setAllowGravity(false);
+
+// 🔥 Tight ship collision (smaller than sprite)
+const shipRadius = 25; // tweak 16–20
+s.ship.body.setCircle(
+  shipRadius,
+  (s.ship.displayWidth / 2) - shipRadius,
+  (s.ship.displayHeight / 2) - shipRadius
+);
+
+
 
   // Drift / inertia
   s.ship.setDrag(18, 18);
