@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Blaasteroids</title>
+
+  <link rel="icon" href="/icon.png?v=1" />
+  <style>
+    html, body { height:100%; margin:0; background:#070a16; }
+    #game { width:100%; height:100%; display:grid; place-items:center; }
+    canvas { outline:none; }
+    .hint{
+      position:fixed; left:12px; bottom:12px;
+      color:#cfe3ff;
+      font:14px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Arial;
+      opacity:.9;
+    }
+  </style>
+
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+</head>
+<body>
+<div id="game"></div>
+<div class="hint">
+  Thrust: <b>W / ↑</b> · Turn: <b>A / D</b> · Shoot: <b>Space</b> · Restart: <b>R</b><br/>
+  Destroy asteroids → difficulty increases
+</div>
+
+<script>
+const W = 900, H = 540;
+
+const config = {
+  type: Phaser.AUTO,
+  parent: "game",
+  width: W,
+  height: H,
+  backgroundColor: "#070a16",
+  physics: { default: "arcade", arcade: { debug:false } },
+  scene: { preload, create, update }
+};
+
+new Phaser.Game(config);
+
+function preload(){
+  const g = this.make.graphics({ add:false });
+
+  // Ship
+  g.clear();
+  g.fillStyle(0x60a5fa,1);
+  g.beginPath();
+  g.moveTo(16,0);
+  g.lineTo(32,32);
+  g.lineTo(16,24);
+  g.lineTo(0,32);
+  g.closePath();
+  g.fillPath();
+  g.generateTexture("ship",32,32);
+
+  // Asteroid
+  g.clear();
+  g.fillStyle(0x94a3b8,1);
+  g.fillCircle(20,20,18);
+  g.lineStyle(2,0x070a16,0.4);
+  g.strokeCircle(20,20,18);
+  g.generateTexture("asteroid",40,40);
+
+  // Bullet
+  g.clear();
+  g.fillStyle(0xfbbf24,1);
+  g.fillRect(0,0,6,2);
+  g.generateTexture("bullet",6,2);
+}
+
+function create(){
+  const s = this;
+
+  s.alive = true;
+  s.score = 0;
+  s.kills = 0;
+  s.level = 1;
+
+  s.cursors = s.input.keyboard.createCursorKeys();
+  s.keys = s.input.keyboard.addKeys("A,D,W,SPACE,R");
+
+  // Ship
+  s.ship = s.physics.add.sprite(W/2,H/2,"ship");
+  s.ship.setDamping(true);
+  s.ship.setDrag(0.98);
+  s.ship.setMaxVelocity(320);
+  s.ship.setCollideWorldBounds(false);
+
+  // Groups
+  s.asteroids = s.physics.add.group();
+  s.bullets = s.physics.add.group();
+
+  // HUD
+  s.hud = s.add.text(14,12,"",{
+    fontFamily:"system-ui",
+    fontSize:"16px",
+    color:"#cfe3ff"
+  }).setDepth(10);
+
+  // Collisions
+  s.physics.add.overlap(s.bullets, s.asteroids, (b,a)=>{
+    b.destroy();
+    a.destroy();
+    s.kills++;
+    s.score += 10;
+    if (s.kills % 10 === 0) s.level++;
+  });
+
+  s.physics.add.overlap(s.ship, s.asteroids, ()=>gameOver(s));
+
+  // Spawn timer
+  s.spawnTimer = s.time.addEvent({
+    delay: 900,
+    loop:true,
+    callback: ()=>spawnAsteroid(s)
+  });
+}
+
+function update(_,dt){
+  const s = this;
+  if (!s.alive) return;
+
+  if (Phaser.Input.Keyboard.JustDown(s.keys.R)) {
+    s.scene.restart(); return;
+  }
+
+  // Controls
+  if (s.keys.A.isDown) s.ship.setAngularVelocity(-200);
+  else if (s.keys.D.isDown) s.ship.setAngularVelocity(200);
+  else s.ship.setAngularVelocity(0);
+
+  if (s.keys.W.isDown || s.cursors.up.isDown) {
+    s.physics.velocityFromRotation(
+      s.ship.rotation - Math.PI/2,
+      260,
+      s.ship.body.acceleration
+    );
+  } else {
+    s.ship.setAcceleration(0);
+  }
+
+  // Shoot
+  if (Phaser.Input.Keyboard.JustDown(s.keys.SPACE)) shoot(s);
+
+  wrap(s.ship);
+  s.asteroids.getChildren().forEach(wrap);
+  s.bullets.getChildren().forEach(b=>{
+    if (!b.active) return;
+    if (b.life-- <= 0) b.destroy();
+    wrap(b);
+  });
+
+  // Difficulty scaling
+  s.spawnTimer.delay = Math.max(300, 900 - s.level*80);
+
+  s.hud.setText(
+    `Score: ${s.score}   Asteroids: ${s.kills}   Level: ${s.level}`
+  );
+}
+
+function shoot(s){
+  const b = s.physics.add.sprite(s.ship.x,s.ship.y,"bullet");
+  b.setAngle(Phaser.Math.RadToDeg(s.ship.rotation));
+  b.life = 70;
+  s.physics.velocityFromRotation(
+    s.ship.rotation - Math.PI/2,
+    520,
+    b.body.velocity
+  );
+  s.bullets.add(b);
+}
+
+function spawnAsteroid(s){
+  if (!s.alive) return;
+  const edge = Phaser.Math.Between(0,3);
+  let x,y;
+  if (edge===0){ x=-40; y=Math.random()*H; }
+  if (edge===1){ x=W+40; y=Math.random()*H; }
+  if (edge===2){ x=Math.random()*W; y=-40; }
+  if (edge===3){ x=Math.random()*W; y=H+40; }
+
+  const a = s.physics.add.sprite(x,y,"asteroid");
+  const speed = 80 + s.level*30;
+  const angle = Phaser.Math.FloatBetween(0,Math.PI*2);
+  s.physics.velocityFromRotation(angle,speed,a.body.velocity);
+  a.setAngularVelocity(Phaser.Math.Between(-120,120));
+  s.asteroids.add(a);
+}
+
+function wrap(obj){
+  if (obj.x < -40) obj.x = W+40;
+  if (obj.x > W+40) obj.x = -40;
+  if (obj.y < -40) obj.y = H+40;
+  if (obj.y > H+40) obj.y = -40;
+}
+
+function gameOver(s){
+  s.alive = false;
+  s.spawnTimer.paused = true;
+  s.ship.setTint(0xff4d4d);
+  s.add.text(W/2,H/2,
+    `💥 SHIP DESTROYED\nScore: ${s.score}\n\nPress R`,
+    { fontSize:"28px", color:"#fff", align:"center" }
+  ).setOrigin(0.5);
+}
+</script>
+</body>
+</html>
