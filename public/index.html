@@ -102,6 +102,8 @@ function preload() {
   this.load.image("ship", "ship.png");
   this.load.image("asteroid", "asteroid.png");
   this.load.image("bullet", "bullet.png");
+  this.load.audio("shoot", "shoot.wav");
+  this.load.audio("boom", "explosion.wav");
 
   const g = this.make.graphics({ add: false });
   g.clear();
@@ -125,6 +127,11 @@ function create() {
   ["SPACE", "UP", "DOWN", "LEFT", "RIGHT"].forEach((k) => {
     s.input.keyboard.on("keydown-" + k, (e) => e.preventDefault());
   });
+
+  s.sfx = {
+  shoot: s.sound.add("shoot", { volume: 0.3 }),
+  boom: s.sound.add("boom", { volume: 0.4 })
+};
 
   s.particles = s.add.particles(0, 0, "puff", {
     lifespan: 420,
@@ -180,6 +187,7 @@ function create() {
     s.score += 10;
 
     if (s.kills % 10 === 0) s.level++;
+    
   });
 
   s.physics.add.overlap(s.ship, s.asteroids, () => gameOver(s));
@@ -319,6 +327,10 @@ function shoot(s) {
   const speed = 720;
   b.setVelocity(Math.cos(ang) * speed, Math.sin(ang) * speed);
   b.setRotation(s.ship.rotation);
+  
+  if (s.sfx?.shoot) {
+  s.sfx.shoot.play();
+}
 }
 
 function spawnAsteroid(s, inside = false, forcedSize = null, forcedVel = null) {
