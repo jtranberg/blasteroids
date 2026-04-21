@@ -265,12 +265,23 @@ function update(time, delta) {
   containShip(s.ship);
   s.asteroids.getChildren().forEach(wrap);
 
-  s.bullets.getChildren().forEach((b) => {
-    if (!b.active) return;
-    b.life--;
-    if (b.life <= 0) b.destroy();
-    wrap(b);
-  });
+  s.bullets.getChildren().forEach(b => {
+  if (!b.active) return;
+
+  b.life--;
+  if (b.life <= 0) {
+    b.destroy();
+    return;
+  }
+
+  // 🚫 destroy if off screen (no wrapping)
+  if (
+    b.x < -20 || b.x > W + 20 ||
+    b.y < -20 || b.y > H + 20
+  ) {
+    b.destroy();
+  }
+});
 
   // Difficulty scaling
   s.spawnTimer.delay = Math.max(
