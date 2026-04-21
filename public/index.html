@@ -56,23 +56,23 @@
 <script>
 const W = 900, H = 540;
 
-// Tuning knobs (easy to tweak)
+// Tuning knobs
 const ASTEROID_MAX_ON_SCREEN = 14;
-const SPAWN_START_DELAY = 1100;      // ms at level 1
-const SPAWN_MIN_DELAY   = 650;       // ms fastest it can get
-const SPAWN_LEVEL_STEP  = 40;        // ms reduction per level
-const ASTEROID_BASE_SPEED = 120;     // base drift speed
-const ASTEROID_LEVEL_SPEED = 10;     // extra speed per level (gentle)
-const ASTEROID_MAX_SPEED = 240;      // hard cap
-const ASTEROID_SIZE_MIN = 34;        // px
-const ASTEROID_SIZE_MAX = 76;        // px
+const SPAWN_START_DELAY = 1100;
+const SPAWN_MIN_DELAY = 650;
+const SPAWN_LEVEL_STEP = 40;
+const ASTEROID_BASE_SPEED = 120;
+const ASTEROID_LEVEL_SPEED = 10;
+const ASTEROID_MAX_SPEED = 240;
+const ASTEROID_SIZE_MIN = 34;
+const ASTEROID_SIZE_MAX = 76;
 
 // Mobile controls
 const MOBILE_BREAKPOINT = 820;
 const STICK_RADIUS = 64;
 const STICK_DEADZONE = 10;
 const THRUST_THRESHOLD = 18;
-const FIRE_COOLDOWN_MS = 120; // auto fire rate while holding
+const FIRE_COOLDOWN_MS = 120;
 
 const config = {
   type: Phaser.AUTO,
@@ -82,10 +82,11 @@ const config = {
   backgroundColor: "#070a16",
   physics: {
     default: "arcade",
-    arcade: { debug:false, gravity:{ y: 0 } }
+    arcade: {
+      debug: false,
+      gravity: { y: 0 }
+    }
   },
-  // (Optional) "responsive" presentation without rewriting gameplay:
-  // keeps world at 900x540, fits canvas to screen.
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
@@ -103,15 +104,13 @@ function preload() {
   this.load.image("bullet", "bullet.png");
 
   const g = this.make.graphics({ add: false });
-
-  // Debris puff
   g.clear();
   g.fillStyle(0xffffff, 1);
   g.fillCircle(4, 4, 4);
   g.generateTexture("puff", 8, 8);
 }
 
-function create(){
+function create() {
   const s = this;
 
   s.alive = true;
@@ -119,31 +118,30 @@ function create(){
   s.kills = 0;
   s.level = 1;
 
+  s.ctrl = s.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.CTRL);
   s.cursors = s.input.keyboard.createCursorKeys();
   s.keys = s.input.keyboard.addKeys("A,D,W,SPACE,R");
 
-  // Prevent browser stealing Space/Arrows
-  ["SPACE","UP","DOWN","LEFT","RIGHT"].forEach(k=>{
-    s.input.keyboard.on("keydown-" + k, e => e.preventDefault());
+  ["SPACE", "UP", "DOWN", "LEFT", "RIGHT"].forEach((k) => {
+    s.input.keyboard.on("keydown-" + k, (e) => e.preventDefault());
   });
 
-  // Debris particles
   s.particles = s.add.particles(0, 0, "puff", {
     lifespan: 420,
     speed: { min: 40, max: 260 },
     scale: { start: 0.9, end: 0 },
     quantity: 1,
-    emitting: false,
+    emitting: false
   });
 
   // Ship
-  s.ship = s.physics.add.sprite(W/2, H/2, "ship");
+  s.ship = s.physics.add.sprite(W / 2, H / 2, "ship");
   s.ship.setDisplaySize(75, 75);
   s.ship.setDepth(3);
   s.ship.body.setAllowGravity(false);
 
-  // Tight ship collision
-  const shipRadius = 20; // tweak 16–22
+  // Tighter ship collision
+  const shipRadius = 16;
   s.ship.body.setCircle(
     shipRadius,
     (s.ship.displayWidth / 2) - shipRadius,
@@ -159,61 +157,58 @@ function create(){
   s.bullets = s.physics.add.group();
 
   // HUD
-  s.hud = s.add.text(14,12,"",{
-    fontFamily:"system-ui,-apple-system,Segoe UI,Roboto,Arial",
-    fontSize:"16px",
-    color:"#cfe3ff"
+  s.hud = s.add.text(14, 12, "", {
+    fontFamily: "system-ui,-apple-system,Segoe UI,Roboto,Arial",
+    fontSize: "16px",
+    color: "#cfe3ff"
   }).setDepth(10);
 
-  s.hud2 = s.add.text(14,36,"",{
-    fontFamily:"system-ui,-apple-system,Segoe UI,Roboto,Arial",
-    fontSize:"13px",
-    color:"#93c5fd"
+  s.hud2 = s.add.text(14, 36, "", {
+    fontFamily: "system-ui,-apple-system,Segoe UI,Roboto,Arial",
+    fontSize: "13px",
+    color: "#93c5fd"
   }).setDepth(10);
 
   // Collisions
   s.physics.add.overlap(s.bullets, s.asteroids, (b, a) => {
     if (!b.active || !a.active) return;
+
     b.destroy();
     destroyAsteroid(s, a);
 
     s.kills++;
     s.score += 10;
+
     if (s.kills % 10 === 0) s.level++;
   });
 
-  s.physics.add.overlap(s.ship, s.asteroids, ()=>gameOver(s));
+  s.physics.add.overlap(s.ship, s.asteroids, () => gameOver(s));
 
-  // Spawn timer (with max-on-screen cap)
+  // Spawn timer
   s.spawnTimer = s.time.addEvent({
     delay: SPAWN_START_DELAY,
-    loop:true,
-    callback: ()=>{
+    loop: true,
+    callback: () => {
       if (!s.alive) return;
       if (s.asteroids.getLength() >= ASTEROID_MAX_ON_SCREEN) return;
       spawnAsteroid(s);
     }
   });
 
-  // Guaranteed visible start asteroids (in-bounds)
+  // Start asteroids
   spawnAsteroid(s, true);
   spawnAsteroid(s);
   spawnAsteroid(s);
 
-  // ---------------------------
-  // MOBILE CONTROLS (2 circles)
-  // ---------------------------
-
+  // Mobile controls
   s.isMobileControls =
-    (typeof window !== "undefined") &&
-    (window.innerWidth <= MOBILE_BREAKPOINT) &&
-    (s.sys.game.device.input.touch === true);
+    typeof window !== "undefined" &&
+    window.innerWidth <= MOBILE_BREAKPOINT &&
+    s.sys.game.device.input.touch === true;
 
-  // Multi-touch support (turn+fire together)
   s.input.addPointer(2);
 
-  // State flags used by update()
-  s.touchTurn = 0;      // -1 left, +1 right
+  s.touchTurn = 0;
   s.touchThrust = false;
   s.touchFire = false;
   s.fireCooldown = 0;
@@ -223,18 +218,17 @@ function create(){
   }
 }
 
-function update(time, delta){
+function update(time, delta) {
   const s = this;
   if (!s.alive) return;
 
-  if (Phaser.Input.Keyboard.JustDown(s.keys.R)) {
+  if (Phaser.Input.Keyboard.JustDown(s.keys.R) && s.ctrl.isDown) {
     s.scene.restart();
     return;
   }
 
-  // --- Inputs (keyboard + mobile) ---
-  const turnLeft  = s.keys.A.isDown || (s.touchTurn < 0);
-  const turnRight = s.keys.D.isDown || (s.touchTurn > 0);
+  const turnLeft = s.keys.A.isDown || s.touchTurn < 0;
+  const turnRight = s.keys.D.isDown || s.touchTurn > 0;
   const thrusting = s.keys.W.isDown || s.cursors.up.isDown || s.touchThrust;
 
   // Turn
@@ -244,50 +238,53 @@ function update(time, delta){
 
   // Thrust
   if (thrusting) {
-    const ang = s.ship.rotation - Math.PI/2;
+    const ang = s.ship.rotation - Math.PI / 2;
     const ax = Math.cos(ang) * 520;
     const ay = Math.sin(ang) * 520;
     s.ship.setAcceleration(ax, ay);
   } else {
-    s.ship.setAcceleration(0,0);
+    s.ship.setAcceleration(0, 0);
   }
 
-  // Shoot (space OR hold fire button)
+  // Shoot
   const wantsFire = Phaser.Input.Keyboard.JustDown(s.keys.SPACE) || s.touchFire;
 
   if (s.fireCooldown > 0) s.fireCooldown -= delta;
 
   if (wantsFire) {
-    // Space = immediate shot, TouchFire = auto with cooldown
-    const canShoot = Phaser.Input.Keyboard.JustDown(s.keys.SPACE) || (s.fireCooldown <= 0);
+    const canShoot =
+      Phaser.Input.Keyboard.JustDown(s.keys.SPACE) || s.fireCooldown <= 0;
+
     if (canShoot) {
       shoot(s);
       s.fireCooldown = FIRE_COOLDOWN_MS;
     }
   }
 
-  // Wrap
-  wrap(s.ship);
+  // Keep ship on screen, wrap asteroids and bullets
+  containShip(s.ship);
   s.asteroids.getChildren().forEach(wrap);
 
-  s.bullets.getChildren().forEach(b=>{
+  s.bullets.getChildren().forEach((b) => {
     if (!b.active) return;
     b.life--;
     if (b.life <= 0) b.destroy();
     wrap(b);
   });
 
-  // Difficulty scaling (spawn)
+  // Difficulty scaling
   s.spawnTimer.delay = Math.max(
     SPAWN_MIN_DELAY,
     SPAWN_START_DELAY - s.level * SPAWN_LEVEL_STEP
   );
 
   s.hud.setText(`Score: ${s.score}   Kills: ${s.kills}   Level: ${s.level}`);
-  s.hud2.setText(`Asteroids: ${s.asteroids.getLength()}   Bullets: ${s.bullets.getLength()}`);
+  s.hud2.setText(
+    `Asteroids: ${s.asteroids.getLength()}   Bullets: ${s.bullets.getLength()}`
+  );
 }
 
-function shoot(s){
+function shoot(s) {
   const ang = s.ship.rotation - Math.PI / 2;
 
   const b = s.physics.add.sprite(s.ship.x, s.ship.y, "bullet");
@@ -296,17 +293,13 @@ function shoot(s){
   b.setDrag(0, 0);
   b.life = 90;
 
-  // ✅ Bullet size (small + crisp)
   b.setDisplaySize(60, 25);
-  // Collider uses texture pixels; keep it tiny and centered
   b.body.setCircle(3);
   b.body.setOffset((b.width - 6) / 2, (b.height - 6) / 2);
 
-  // Glow vibe
   b.setAlpha(0.92);
   b.setBlendMode(Phaser.BlendModes.ADD);
 
-  // spawn in front of ship    
   b.x += Math.cos(ang) * 28;
   b.y += Math.sin(ang) * 28;
 
@@ -317,11 +310,7 @@ function shoot(s){
   b.setRotation(s.ship.rotation);
 }
 
-// -------------------------
-// ASTEROIDS
-// -------------------------
-
-function spawnAsteroid(s, inside=false, forcedSize=null, forcedVel=null){
+function spawnAsteroid(s, inside = false, forcedSize = null, forcedVel = null) {
   if (!s.alive) return;
 
   const pad = 30;
@@ -339,10 +328,10 @@ function spawnAsteroid(s, inside=false, forcedSize=null, forcedVel=null){
     );
   } else {
     const edge = Phaser.Math.Between(0, 3);
-    if (edge === 0) { x = -pad;   y = Phaser.Math.Between(0, H); }
-    if (edge === 1) { x = W+pad;  y = Phaser.Math.Between(0, H); }
+    if (edge === 0) { x = -pad; y = Phaser.Math.Between(0, H); }
+    if (edge === 1) { x = W + pad; y = Phaser.Math.Between(0, H); }
     if (edge === 2) { x = Phaser.Math.Between(0, W); y = -pad; }
-    if (edge === 3) { x = Phaser.Math.Between(0, W); y = H+pad; }
+    if (edge === 3) { x = Phaser.Math.Between(0, W); y = H + pad; }
   }
 
   const a = s.physics.add.sprite(x, y, "asteroid");
@@ -350,31 +339,27 @@ function spawnAsteroid(s, inside=false, forcedSize=null, forcedVel=null){
   a.body.setAllowGravity(false);
   a.setDrag(0, 0);
 
-  // Size (display pixels)
-  const size = forcedSize ?? Phaser.Math.Between(ASTEROID_SIZE_MIN, ASTEROID_SIZE_MAX);
+  const size =
+    forcedSize ?? Phaser.Math.Between(ASTEROID_SIZE_MIN, ASTEROID_SIZE_MAX);
   a.setDisplaySize(size, size);
   a.setData("size", size);
 
-  // Collider (texture pixel space)
   const texR = a.width * 0.45;
   a.body.setCircle(texR);
   a.body.setOffset((a.width - texR * 2) / 2, (a.height - texR * 2) / 2);
 
-  // Random rotation
   a.setRotation(Phaser.Math.FloatBetween(0, Math.PI * 2));
 
-  // Brighter tint by size
   if (size >= 64) a.setTint(0xa3b1c2);
   else if (size >= 46) a.setTint(0xd8e1ea);
   else a.setTint(0xf6f9fc);
 
   s.asteroids.add(a);
 
-  // Velocity (gentle + capped)
   if (forcedVel) {
     a.setVelocity(forcedVel.x, forcedVel.y);
   } else {
-    const toCenter = Phaser.Math.Angle.Between(x, y, W/2, H/2);
+    const toCenter = Phaser.Math.Angle.Between(x, y, W / 2, H / 2);
     const ang = toCenter + Phaser.Math.FloatBetween(-0.8, 0.8);
 
     const baseSpeed = ASTEROID_BASE_SPEED + s.level * ASTEROID_LEVEL_SPEED;
@@ -384,16 +369,19 @@ function spawnAsteroid(s, inside=false, forcedSize=null, forcedVel=null){
     a.setVelocity(Math.cos(ang) * speed, Math.sin(ang) * speed);
   }
 
-  const spin = Phaser.Math.Between(-140, 140) * Phaser.Math.Clamp(70 / size, 0.75, 1.25);
+  const spin =
+    Phaser.Math.Between(-140, 140) *
+    Phaser.Math.Clamp(70 / size, 0.75, 1.25);
+
   a.setAngularVelocity(spin);
 
   return a;
 }
 
-function destroyAsteroid(s, a){
+function destroyAsteroid(s, a) {
   const size = a.getData("size") ?? a.displayWidth ?? 60;
 
-  const debrisCount = Math.floor(Phaser.Math.Clamp(6 + (size / 4), 8, 30));
+  const debrisCount = Math.floor(Phaser.Math.Clamp(6 + size / 4, 8, 30));
   if (s.particles) s.particles.emitParticleAt(a.x, a.y, debrisCount);
 
   if (size >= 64) s.cameras.main.shake(120, 0.006);
@@ -407,8 +395,9 @@ function destroyAsteroid(s, a){
   a.destroy();
 }
 
-function splitAsteroid(s, parent, childSize, count){
-  const px = parent.x, py = parent.y;
+function splitAsteroid(s, parent, childSize, count) {
+  const px = parent.x;
+  const py = parent.y;
   const pvx = parent.body?.velocity?.x ?? 0;
   const pvy = parent.body?.velocity?.y ?? 0;
 
@@ -424,11 +413,7 @@ function splitAsteroid(s, parent, childSize, count){
   }
 }
 
-// -------------------------
-// Helpers
-// -------------------------
-
-function wrap(obj){
+function wrap(obj) {
   const pad = 40;
   if (obj.x <= -pad) obj.x = W + pad;
   if (obj.x >= W + pad) obj.x = -pad;
@@ -436,35 +421,61 @@ function wrap(obj){
   if (obj.y >= H + pad) obj.y = -pad;
 }
 
-function gameOver(s){
+function containShip(ship) {
+  const halfW = ship.displayWidth * 0.5;
+  const halfH = ship.displayHeight * 0.5;
+
+  if (ship.x < halfW) {
+    ship.x = halfW;
+    if (ship.body.velocity.x < 0) ship.body.velocity.x = 0;
+  }
+
+  if (ship.x > W - halfW) {
+    ship.x = W - halfW;
+    if (ship.body.velocity.x > 0) ship.body.velocity.x = 0;
+  }
+
+  if (ship.y < halfH) {
+    ship.y = halfH;
+    if (ship.body.velocity.y < 0) ship.body.velocity.y = 0;
+  }
+
+  if (ship.y > H - halfH) {
+    ship.y = H - halfH;
+    if (ship.body.velocity.y > 0) ship.body.velocity.y = 0;
+  }
+}
+
+function gameOver(s) {
   s.alive = false;
   s.spawnTimer.paused = true;
 
   s.ship.setTint(0xff4d4d);
-  s.ship.setAcceleration(0,0);
-  s.ship.setVelocity(0,0);
+  s.ship.setAcceleration(0, 0);
+  s.ship.setVelocity(0, 0);
   s.ship.setAngularVelocity(0);
 
-  s.add.text(W/2, H/2,
-    `💥 SHIP DESTROYED\nScore: ${s.score}\n\nPress R to restart`,
-    { fontFamily:"system-ui", fontSize:"28px", color:"#fff", align:"center" }
+  s.add.text(
+    W / 2,
+    H / 2,
+    `💥 SHIP DESTROYED\nScore: ${s.score}\n\nPress Ctrl + R to restart`,
+    {
+      fontFamily: "system-ui",
+      fontSize: "28px",
+      color: "#fff",
+      align: "center"
+    }
   ).setOrigin(0.5);
 }
 
-// -------------------------
-// Mobile UI (2 circles)
-// -------------------------
-
 function createMobileControls(s) {
-  // UI positions inside the fixed 900x540 world
   const pad = 70;
   const leftX = pad + STICK_RADIUS;
-  const leftY = H - (pad);
+  const leftY = H - pad;
 
-  const rightX = W - (pad);
-  const rightY = H - (pad);
+  const rightX = W - pad;
+  const rightY = H - pad;
 
-  // Left stick visuals
   const base = s.add.circle(leftX, leftY, STICK_RADIUS, 0xffffff, 0.10)
     .setDepth(999)
     .setScrollFactor(0);
@@ -477,7 +488,6 @@ function createMobileControls(s) {
     .setDepth(1000)
     .setScrollFactor(0);
 
-  // Right fire button
   const fire = s.add.circle(rightX, rightY, 52, 0xfbbf24, 0.12)
     .setDepth(999)
     .setScrollFactor(0);
@@ -486,11 +496,16 @@ function createMobileControls(s) {
     .setDepth(998)
     .setScrollFactor(0);
 
-  // Interactivity
-  base.setInteractive(new Phaser.Geom.Circle(leftX, leftY, STICK_RADIUS), Phaser.Geom.Circle.Contains);
-  fire.setInteractive(new Phaser.Geom.Circle(rightX, rightY, 52), Phaser.Geom.Circle.Contains);
+  base.setInteractive(
+    new Phaser.Geom.Circle(leftX, leftY, STICK_RADIUS),
+    Phaser.Geom.Circle.Contains
+  );
 
-  // Track joystick pointer
+  fire.setInteractive(
+    new Phaser.Geom.Circle(rightX, rightY, 52),
+    Phaser.Geom.Circle.Contains
+  );
+
   s.joyPointerId = null;
 
   base.on("pointerdown", (p) => {
@@ -513,28 +528,26 @@ function createMobileControls(s) {
     const dx = p.worldX - leftX;
     const dy = p.worldY - leftY;
 
-    const dist = Math.sqrt(dx*dx + dy*dy);
+    const dist = Math.sqrt(dx * dx + dy * dy);
     const clamped = Math.min(dist, STICK_RADIUS);
 
-    const nx = dist > 0 ? (dx / dist) : 0;
-    const ny = dist > 0 ? (dy / dist) : 0;
+    const nx = dist > 0 ? dx / dist : 0;
+    const ny = dist > 0 ? dy / dist : 0;
 
     nub.setPosition(leftX + nx * clamped, leftY + ny * clamped);
 
-    // Convert stick into actions
     s.touchTurn = 0;
     s.touchThrust = false;
 
     if (Math.abs(dx) > STICK_DEADZONE) {
       s.touchTurn = dx < 0 ? -1 : 1;
     }
-    // thrust when pushing up enough
+
     if (dy < -THRUST_THRESHOLD) {
       s.touchThrust = true;
     }
   });
 
-  // Fire button hold
   fire.on("pointerdown", () => {
     s.touchFire = true;
     fire.setAlpha(0.18);
@@ -548,13 +561,11 @@ function createMobileControls(s) {
   });
 
   fire.on("pointerout", () => {
-    // if finger slides off
     s.touchFire = false;
     fire.setAlpha(0.12);
     fireRing.setAlpha(0.08);
   });
 
-  // Keep references if you want to tweak later
   s.mobileUI = { base, ring, nub, fire, fireRing };
 }
 </script>
